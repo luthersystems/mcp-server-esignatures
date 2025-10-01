@@ -2,8 +2,6 @@
 
 MCP server for eSignatures (https://esignatures.com)
 
-<a href="https://glama.ai/mcp/servers/0ev38n83u4"><img width="380" height="200" src="https://glama.ai/mcp/servers/0ev38n83u4/badge" alt="Server for eSignatures MCP server" /></a>
-
 ## Tools
 
 
