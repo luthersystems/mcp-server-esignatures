@@ -17,6 +17,8 @@ from .input_schema_template_collaborators import INPUT_SCHEMA_ADD_TEMPLATE_COLLA
 
 ESIGNATURES_SECRET_TOKEN = getenv("ESIGNATURES_SECRET_TOKEN")
 ESIGNATURES_API_BASE = "https://esignatures.com"
+RESPOND_WITH_JSON = getenv("RESPOND_WITH_JSON", "").lower()
+
 
 def _json_text_response(resp: httpx.Response) -> types.TextContent:
     """
@@ -39,8 +41,6 @@ def _json_text_response(resp: httpx.Response) -> types.TextContent:
         "status_code": resp.status_code,
         "ok": resp.is_success,
         "data": body,
-        # optionally expose headers if useful:
-        # "headers": dict(resp.headers),
     }
     return types.TextContent(type="text", text=json.dumps(payload))
 
@@ -166,19 +166,9 @@ async def serve(respond_with_json: bool = False) -> Server:
     return server
 
 @click.command()
-@click.option(
-    "--respondWithJson",
-    "--respond-with-json",
-    "respond_with_json",
-    is_flag=True,
-    default=None,
-    help="Return responses as valid JSON instead of text format (default: False for backwards compatibility)"
-)
-def main(respond_with_json: bool | None):
+def main():
     # Check environment variable if flag not provided (for backwards compatibility)
-    if respond_with_json is None:
-        env_value = getenv("RESPOND_WITH_JSON", "").lower()
-        respond_with_json = env_value in ("1", "true", "yes", "on")
+    respond_with_json = RESPOND_WITH_JSON in ("1", "true", "yes", "on")
     
     async def _run():
         # Run the server using stdin/stdout streams
