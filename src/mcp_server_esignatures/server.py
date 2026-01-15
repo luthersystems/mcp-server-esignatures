@@ -17,8 +17,34 @@ from .input_schema_template_collaborators import INPUT_SCHEMA_ADD_TEMPLATE_COLLA
 
 ESIGNATURES_SECRET_TOKEN = getenv("ESIGNATURES_SECRET_TOKEN")
 ESIGNATURES_API_BASE = "https://esignatures.com"
+RESPOND_WITH_JSON = getenv("RESPOND_WITH_JSON", "").lower()
 
-async def serve() -> Server:
+
+def _json_text_response(resp: httpx.Response) -> types.TextContent:
+    """
+    Always return a valid JSON string for MCP text content.
+
+    Shape:
+    {
+      "status_code": 200,
+      "ok": true,
+      "data": <parsed JSON or raw text>,
+      "headers": {...}   # optional, handy for debugging
+    }
+    """
+    try:
+        body = resp.json()          # real JSON if possible
+    except Exception:
+        body = resp.text            # fallback to raw text
+
+    payload = {
+        "status_code": resp.status_code,
+        "ok": resp.is_success,
+        "data": body,
+    }
+    return types.TextContent(type="text", text=json.dumps(payload))
+
+async def serve(respond_with_json: bool = False) -> Server:
     secret_token = ESIGNATURES_SECRET_TOKEN
     server = Server("mcp-server-esignatures")
     httpxClient = httpx.AsyncClient(base_url=ESIGNATURES_API_BASE)
@@ -99,64 +125,62 @@ async def serve() -> Server:
     async def handle_call_tool(
         name: str, arguments: dict | None
     ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
+        # Make the API call based on tool name
+        response = None
         if name == "create_contract":
             response = await httpxClient.post(f"/api/contracts?token={secret_token}&source=mcpserver", json=arguments)
-            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
-        if name == "query_contract":
+        elif name == "query_contract":
             response = await httpxClient.get(f"/api/contracts/{arguments.get('contract_id')}?token={secret_token}")
-            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
-        if name == "withdraw_contract":
+        elif name == "withdraw_contract":
             response = await httpxClient.post(f"/api/contracts/{arguments.get('contract_id')}/withdraw?token={secret_token}")
-            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
-        if name == "delete_contract":
+        elif name == "delete_contract":
             response = await httpxClient.post(f"/api/contracts/{arguments.get('contract_id')}/delete?token={secret_token}")
-            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
-        if name == "list_recent_contracts":
+        elif name == "list_recent_contracts":
             response = await httpxClient.get(f"/api/contracts/recent?token={secret_token}")
-            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
-
-        if name == "create_template":
+        elif name == "create_template":
             response = await httpxClient.post(f"/api/templates?token={secret_token}", json=arguments)
-            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
-        if name == "query_template":
+        elif name == "query_template":
             response = await httpxClient.get(f"/api/templates/{arguments.get('template_id')}?token={secret_token}")
-            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
-        if name == "update_template":
+        elif name == "update_template":
             response = await httpxClient.post(f"/api/templates/{arguments.get('template_id')}?token={secret_token}", json=arguments)
-            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
-        if name == "delete_template":
+        elif name == "delete_template":
             response = await httpxClient.post(f"/api/templates/{arguments.get('template_id')}/delete?token={secret_token}")
-            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
-        if name == "list_templates":
+        elif name == "list_templates":
             response = await httpxClient.get(f"/api/templates?token={secret_token}")
-            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
-
-        if name == "add_template_collaborator":
+        elif name == "add_template_collaborator":
             response = await httpxClient.post(f"/api/templates/{arguments.get('template_id')}/collaborators?token={secret_token}", json=arguments)
-            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
-        if name == "remove_template_collaborator":
+        elif name == "remove_template_collaborator":
             response = await httpxClient.post(f"/api/templates/{arguments.get('template_id')}/collaborators/{arguments.get('template_collaborator_id')}/remove?token={secret_token}")
-            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
-        if name == "list_template_collaborators":
+        elif name == "list_template_collaborators":
             response = await httpxClient.get(f"/api/templates/{arguments.get('template_id')}/collaborators?token={secret_token}")
-            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
+        else:
+            raise ValueError(f"Unknown tool: {name}")
 
-        raise ValueError(f"Unknown tool: {name}")
+        # Format response based on flag
+        if respond_with_json:
+            return [_json_text_response(response)]
+        else:
+            # Use old text format (backwards compatible)
+            return [types.TextContent(type="text", text=f"Response code: {response.status_code}, response: {response.json()}")]
 
     return server
 
+@click.command()
 def main():
+    # Check environment variable if flag not provided (for backwards compatibility)
+    respond_with_json = RESPOND_WITH_JSON in ("1", "true", "yes", "on")
+    
     async def _run():
         # Run the server using stdin/stdout streams
         async with mcp.server.stdio.stdio_server() as (read_stream, write_stream):
-            server = await serve()
-            await server.run(
+            server_instance = await serve(respond_with_json=respond_with_json)
+            await server_instance.run(
                 read_stream,
                 write_stream,
                 InitializationOptions(
                     server_name="mcp-server-esignatures",
                     server_version="0.1.0",
-                    capabilities=server.get_capabilities(
+                    capabilities=server_instance.get_capabilities(
                         notification_options=NotificationOptions(),
                         experimental_capabilities={},
                     ),
